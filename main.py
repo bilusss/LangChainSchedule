@@ -50,7 +50,8 @@ class AgentState(TypedDict):
 # --- 3. MODEL Z NARZĘDZIAMI ---
 llm = ChatGoogleGenerativeAI(
     # model="gemini-2.5-flash",
-    model="gemini-2.5-flash-lite",
+    # model="gemini-2.5-flash-lite",
+    model="gemini-flash-latest",
     temperature=0.3,
     max_retries=2,
 )
