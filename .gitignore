@@ -183,3 +183,5 @@ cython_debug/
 token.pickle
 
 credentials.json
+/mobile/.expo
+/mobile/node_modules
