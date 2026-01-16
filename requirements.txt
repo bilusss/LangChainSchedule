@@ -60,3 +60,4 @@ groq>=0.4.0
 # Opcjonalne - dla lokalnych modeli
 # langchain-ollama  # pip install langchain-ollama
 # langchain-openai  # pip install langchain-openai (dla LM Studio lub OpenAI)
+pytz

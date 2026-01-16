@@ -104,8 +104,12 @@ export default function ChatScreen() {
   }, []);
 
   // Wysłanie wiadomości
-  const sendMessage = async (text: string) => {
+  const sendMessage = async (text: string, explicitConversationId?: string | null) => {
     if (!text.trim() || isLoading) return;
+
+    // Użyj jawnie przekazanego conversationId lub domyślnego z kontekstu
+    const currentConversationId = explicitConversationId !== undefined ? explicitConversationId : conversationId;
+    console.log('📤 Wysyłam wiadomość z conversationId:', currentConversationId);
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -119,10 +123,14 @@ export default function ChatScreen() {
     setIsLoading(true);
 
     try {
-      const response = await apiService.sendMessage(text, conversationId || undefined);
+      const response = await apiService.sendMessage(text, currentConversationId || undefined);
+      console.log('📥 Otrzymano odpowiedź z conversationId:', response.conversation_id);
       
       if (!conversationId) {
+        console.log('✅ Ustawiam nowy conversationId:', response.conversation_id);
         setConversationId(response.conversation_id);
+      } else {
+        console.log('✅ Używam istniejącego conversationId:', conversationId);
       }
 
       const aiMessage: Message = {
@@ -183,9 +191,17 @@ export default function ChatScreen() {
     const result = await audioService.stopRecording();
     
     if (result.success && result.text) {
+      console.log('🎤 Transkrypcja zakończona:', result.text);
+      console.log('🎤 Obecny conversationId przed wysłaniem:', conversationId);
       setInputText(result.text);
-      // Automatycznie wyślij
-      sendMessage(result.text);
+      
+      // Użyj funkcji callback, aby mieć pewność, że używamy najnowszego conversationId
+      setConversationId((currentId) => {
+        console.log('🎤 Używam conversationId z callback:', currentId);
+        // Automatycznie wyślij z aktualnym conversationId
+        sendMessage(result.text, currentId);
+        return currentId; // Zwróć niezmieniony ID
+      });
     } else if (!result.success) {
       const errorMessage: Message = {
         id: Date.now().toString() + '_error',

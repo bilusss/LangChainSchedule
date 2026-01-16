@@ -183,11 +183,26 @@ def create_calendar_event(
     try:
         service = _get_calendar_service()
         
-        # Upewnij się, że czas ma strefę czasową
-        if not start_time.endswith('Z') and '+' not in start_time:
-            start_time = start_time + '+01:00'  # Domyślnie polska strefa
-        if not end_time.endswith('Z') and '+' not in end_time:
-            end_time = end_time + '+01:00'
+        # Upewnij się, że czas ma strefę czasową (Warszawa)
+        # Polska używa CET (+01:00) zimą i CEST (+02:00) latem
+        import pytz
+        warsaw_tz = pytz.timezone('Europe/Warsaw')
+        
+        def add_warsaw_timezone(time_str: str) -> str:
+            if time_str.endswith('Z') or '+' in time_str or '-' in time_str[-6:]:
+                return time_str
+            # Parsuj i dodaj strefę czasową Warszawy
+            try:
+                from datetime import datetime as dt
+                naive_dt = dt.fromisoformat(time_str)
+                localized_dt = warsaw_tz.localize(naive_dt)
+                return localized_dt.isoformat()
+            except:
+                # Fallback - użyj +01:00 (CET)
+                return time_str + '+01:00'
+        
+        start_time = add_warsaw_timezone(start_time)
+        end_time = add_warsaw_timezone(end_time)
         
         event = {
             'summary': summary,
@@ -208,9 +223,39 @@ def create_calendar_event(
             body=event
         ).execute()
         
-        return f"✅ Utworzono wydarzenie: {created_event.get('summary')}\n" \
-               f"   ID: {created_event.get('id')}\n" \
-               f"   Link: {created_event.get('htmlLink')}"
+        # Sformatuj czas po polsku
+        start_dt = created_event['start'].get('dateTime', created_event['start'].get('date'))
+        end_dt = created_event['end'].get('dateTime', created_event['end'].get('date'))
+        
+        # Parsuj i formatuj ładnie
+        try:
+            from datetime import datetime as dt
+            start_parsed = dt.fromisoformat(start_dt.replace('Z', '+00:00'))
+            end_parsed = dt.fromisoformat(end_dt.replace('Z', '+00:00'))
+            
+            # Polski format daty
+            days_pl = ['poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota', 'niedziela']
+            months_pl = ['stycznia', 'lutego', 'marca', 'kwietnia', 'maja', 'czerwca', 
+                        'lipca', 'sierpnia', 'września', 'października', 'listopada', 'grudnia']
+            
+            day_name = days_pl[start_parsed.weekday()]
+            date_str = f"{start_parsed.day} {months_pl[start_parsed.month - 1]} {start_parsed.year}"
+            time_str = f"{start_parsed.strftime('%H:%M')} - {end_parsed.strftime('%H:%M')}"
+            
+            return f"""✅ Wydarzenie dodane do kalendarza!
+
+📅 {created_event.get('summary')}
+🗓️  {day_name}, {date_str}
+⏰ {time_str} (czas warszawski)
+📍 {created_event.get('location') or 'Brak lokalizacji'}
+
+🔗 Link: {created_event.get('htmlLink')}"""
+        except:
+            # Fallback jeśli parsowanie się nie uda
+            return f"✅ Utworzono wydarzenie: {created_event.get('summary')}\n" \
+                   f"   Start: {start_dt}\n" \
+                   f"   Koniec: {end_dt}\n" \
+                   f"   Link: {created_event.get('htmlLink')}"
                
     except HttpError as error:
         return f"❌ Błąd Google Calendar API: {error}"

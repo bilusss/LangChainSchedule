@@ -370,15 +370,44 @@ async def api_chat(request: ChatRequest):
         # Pobierz lub utwórz konwersację
         conv_id = request.conversation_id or f"conv_{datetime.now().timestamp()}"
         
-        if conv_id not in conversations:
-            system_msg = SystemMessage(content="""Jesteś asystentem planowania z dostępem do Google Calendar.
+        print(f"📥 Otrzymano wiadomość: '{request.message}' z conversation_id: {request.conversation_id}")
+        print(f"📥 Używam conversation_id: {conv_id}")
+        
+        if conv_id in conversations:
+            print(f"♻️  Kontynuuję istniejącą konwersację: {len(conversations[conv_id])} wiadomości w historii")
+        else:
+            print(f"✨ Tworzę nową konwersację: {conv_id}")
+            
+            # Pobierz aktualną datę i czas
+            now = datetime.now()
+            current_date = now.strftime("%Y-%m-%d")
+            current_time = now.strftime("%H:%M")
+            day_of_week = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"][now.weekday()]
+            
+            system_msg = SystemMessage(content=f"""Jesteś asystentem planowania z dostępem do Google Calendar.
+
+AKTUALNA DATA I CZAS:
+- Dzisiaj jest: {current_date} ({day_of_week})
+- Aktualna godzina: {current_time}
+- Strefa czasowa: Europe/Warsaw (Polska)
+- Lokalizacja użytkownika: Warszawa, Polska
+
 Możesz:
 - Sprawdzać wydarzenia w kalendarzu (get_calendar_events)
 - Tworzyć nowe wydarzenia (create_calendar_event)
 - Aktualizować istniejące wydarzenia (update_calendar_event)
 - Usuwać wydarzenia (delete_calendar_event)
 
-Odpowiadaj po polsku. Bądź zwięzły i pomocny.""")
+WAŻNE ZASADY:
+1. Gdy użytkownik mówi "dzisiaj", użyj daty {current_date}
+2. Gdy użytkownik mówi "jutro", dodaj 1 dzień do {current_date}
+3. Gdy użytkownik podaje godzinę (np. "15:30-16:30"), od razu utwórz wydarzenie używając narzędzia create_calendar_event
+4. Formaty czasów do narzędzi: "{current_date}T15:30:00" (ISO 8601)
+5. NIE pytaj o potwierdzenie - od razu wykonaj akcję jeśli masz wszystkie dane
+6. Wszystkie czasy są w strefie Europe/Warsaw (czas warszawski)
+7. Po utworzeniu wydarzenia, przekaż użytkownikowi informację zwrotną z narzędzia
+
+Odpowiadaj po polsku. Bądź zwięzły i pomocny. Wykonuj akcje natychmiast.""")
             conversations[conv_id] = [system_msg]
         
         # Dodaj wiadomość użytkownika
@@ -397,23 +426,44 @@ Odpowiadaj po polsku. Bądź zwięzły i pomocny.""")
             # Dodaj odpowiedź LLM
             conversations[conv_id].append(response)
             
+            print(f"🔧 LLM wywołuje narzędzia: {[tc['name'] for tc in response.tool_calls]}")
+            
             # Wykonaj narzędzia
             tool_result = tool_node.invoke({"messages": conversations[conv_id]})
             
-            # Dodaj wyniki narzędzi
+            # Pobierz wynik narzędzia (do ewentualnego fallback)
+            tool_output = ""
             if tool_result.get("messages"):
                 conversations[conv_id].extend(tool_result["messages"])
+                # Zapisz wynik narzędzia
+                for msg in tool_result["messages"]:
+                    if hasattr(msg, 'content') and msg.content:
+                        tool_output = msg.content
+                        print(f"🔧 Wynik narzędzia: {tool_output[:200]}...")
             
             # Poproś LLM o odpowiedź na podstawie wyników
             final_response = llm.invoke(conversations[conv_id])
             conversations[conv_id].append(final_response)
             
+            # Sprawdź czy odpowiedź nie jest pusta
+            response_text = final_response.content
+            if not response_text or response_text.strip() == "":
+                print("⚠️ Pusta odpowiedź od LLM, używam wyniku narzędzia")
+                response_text = tool_output if tool_output else "Operacja wykonana pomyślnie."
+            
+            print(f"📤 Wysyłam odpowiedź (z narzędziami): {response_text[:100]}...")
+            print(f"📤 Rozmiar historii: {len(conversations[conv_id])} wiadomości")
+            
             return ChatResponse(
-                response=final_response.content,
+                response=response_text,
                 conversation_id=conv_id
             )
         else:
             conversations[conv_id].append(response)
+            
+            print(f"📤 Wysyłam odpowiedź: {response.content[:100]}...")
+            print(f"📤 Rozmiar historii: {len(conversations[conv_id])} wiadomości")
+            
             return ChatResponse(
                 response=response.content,
                 conversation_id=conv_id
