@@ -46,7 +46,8 @@
         {
           "microphonePermission": "Ta aplikacja potrzebuje dostępu do mikrofonu do nagrywania poleceń głosowych."
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ]
   }
 }

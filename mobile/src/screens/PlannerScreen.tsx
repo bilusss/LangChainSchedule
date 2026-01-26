@@ -2,7 +2,7 @@
  * Planner Screen - AI Planner z GROQ
  */
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -14,9 +14,14 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Keyboard,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { format } from 'date-fns';
+import { pl } from 'date-fns/locale';
 
 import { useApp } from '../context/AppContext';
 import apiService, { PlanEvent, PlanResponse } from '../services/api';
@@ -36,24 +41,56 @@ const theme = {
 
 type Step = 'input' | 'loading' | 'review' | 'executing' | 'done';
 
+interface TaskItem {
+  text: string;
+  date: Date;
+  time: Date;
+}
+
+const createDefaultTask = (): TaskItem => ({
+  text: '',
+  date: new Date(),
+  time: new Date(),
+});
+
 export default function PlannerScreen() {
   const { preferences } = useApp();
+  const scrollViewRef = useRef<ScrollView>(null);
   
   const [step, setStep] = useState<Step>('input');
-  const [tasks, setTasks] = useState<string[]>(['']);
+  const [tasks, setTasks] = useState<TaskItem[]>([createDefaultTask()]);
   const [generatedPlan, setGeneratedPlan] = useState<PlanResponse | null>(null);
   const [selectedEvents, setSelectedEvents] = useState<Set<number>>(new Set());
   const [executionResults, setExecutionResults] = useState<string[]>([]);
+  
+  // Stan dla DateTimePicker
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [activeTaskIndex, setActiveTaskIndex] = useState<number | null>(null);
 
   // Dodaj nowe zadanie
   const addTask = () => {
-    setTasks([...tasks, '']);
+    setTasks([...tasks, createDefaultTask()]);
   };
 
-  // Aktualizuj zadanie
-  const updateTask = (index: number, text: string) => {
+  // Aktualizuj tekst zadania
+  const updateTaskText = (index: number, text: string) => {
     const newTasks = [...tasks];
-    newTasks[index] = text;
+    newTasks[index] = { ...newTasks[index], text };
+    setTasks(newTasks);
+  };
+
+  // Aktualizuj datę zadania
+  const updateTaskDate = (index: number, date: Date) => {
+    const newTasks = [...tasks];
+    newTasks[index] = { ...newTasks[index], date };
+    setTasks(newTasks);
+  };
+
+  // Aktualizuj godzinę zadania
+  const updateTaskTime = (index: number, time: Date) => {
+    const newTasks = [...tasks];
+    newTasks[index] = { ...newTasks[index], time };
     setTasks(newTasks);
   };
 
@@ -65,9 +102,43 @@ export default function PlannerScreen() {
     }
   };
 
+  // Obsługa wyboru daty
+  const handleDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowDatePicker(false);
+    }
+    if (selectedDate && activeTaskIndex !== null) {
+      updateTaskDate(activeTaskIndex, selectedDate);
+    }
+  };
+
+  // Obsługa wyboru godziny
+  const handleTimeChange = (event: DateTimePickerEvent, selectedTime?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowTimePicker(false);
+    }
+    if (selectedTime && activeTaskIndex !== null) {
+      updateTaskTime(activeTaskIndex, selectedTime);
+    }
+  };
+
+  // Otwórz picker daty
+  const openDatePicker = (index: number) => {
+    setActiveTaskIndex(index);
+    setShowDatePicker(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  // Otwórz picker godziny
+  const openTimePicker = (index: number) => {
+    setActiveTaskIndex(index);
+    setShowTimePicker(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
   // Generuj plan
   const generatePlan = async () => {
-    const validTasks = tasks.filter((t) => t.trim());
+    const validTasks = tasks.filter((t) => t.text.trim());
     
     if (validTasks.length === 0) {
       Alert.alert('Błąd', 'Dodaj przynajmniej jedno zadanie');
@@ -77,8 +148,15 @@ export default function PlannerScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setStep('loading');
 
+    // Przygotuj zadania z datą i godziną
+    const tasksWithDateTime = validTasks.map((task) => {
+      const dateStr = format(task.date, 'yyyy-MM-dd');
+      const timeStr = format(task.time, 'HH:mm');
+      return `${task.text} (${dateStr} o ${timeStr})`;
+    });
+
     try {
-      const plan = await apiService.generatePlan(validTasks, {
+      const plan = await apiService.generatePlan(tasksWithDateTime, {
         sleepSchedule: preferences.sleepSchedule,
         deepWorkWindows: preferences.deepWorkWindows,
         studyBlockDuration: preferences.studyBlockDuration,
@@ -148,7 +226,7 @@ export default function PlannerScreen() {
   // Reset
   const reset = () => {
     setStep('input');
-    setTasks(['']);
+    setTasks([createDefaultTask()]);
     setGeneratedPlan(null);
     setSelectedEvents(new Set());
     setExecutionResults([]);
@@ -225,10 +303,17 @@ export default function PlannerScreen() {
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
       {/* STEP: Input */}
       {step === 'input' && (
-        <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        <ScrollView 
+          ref={scrollViewRef}
+          style={styles.scrollView} 
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+        >
           <View style={styles.header}>
             <Text style={styles.title}>🚀 AI Planner</Text>
             <Text style={styles.subtitle}>
@@ -240,22 +325,53 @@ export default function PlannerScreen() {
             <Text style={styles.sectionTitle}>📋 Twoje zadania</Text>
             
             {tasks.map((task, index) => (
-              <View key={index} style={styles.taskRow}>
+              <View key={index} style={styles.taskCard}>
+                <View style={styles.taskCardHeader}>
+                  <Text style={styles.taskNumber}>Zadanie {index + 1}</Text>
+                  {tasks.length > 1 && (
+                    <TouchableOpacity
+                      style={styles.removeButton}
+                      onPress={() => removeTask(index)}
+                    >
+                      <Ionicons name="close-circle" size={24} color={theme.error} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+                
                 <TextInput
                   style={styles.taskInput}
-                  value={task}
-                  onChangeText={(text) => updateTask(index, text)}
-                  placeholder={`Zadanie ${index + 1}...`}
+                  value={task.text}
+                  onChangeText={(text) => updateTaskText(index, text)}
+                  placeholder="Opisz zadanie..."
                   placeholderTextColor={theme.textSecondary}
+                  onFocus={(e) => {
+                    setTimeout(() => {
+                      scrollViewRef.current?.scrollTo({ y: index * 180 + 150, animated: true });
+                    }, 100);
+                  }}
                 />
-                {tasks.length > 1 && (
-                  <TouchableOpacity
-                    style={styles.removeButton}
-                    onPress={() => removeTask(index)}
+                
+                <View style={styles.dateTimeRow}>
+                  <TouchableOpacity 
+                    style={styles.dateTimeButton}
+                    onPress={() => openDatePicker(index)}
                   >
-                    <Ionicons name="close-circle" size={24} color={theme.error} />
+                    <Ionicons name="calendar-outline" size={20} color={theme.accent} />
+                    <Text style={styles.dateTimeText}>
+                      {format(task.date, 'd MMM yyyy', { locale: pl })}
+                    </Text>
                   </TouchableOpacity>
-                )}
+                  
+                  <TouchableOpacity 
+                    style={styles.dateTimeButton}
+                    onPress={() => openTimePicker(index)}
+                  >
+                    <Ionicons name="time-outline" size={20} color={theme.accent} />
+                    <Text style={styles.dateTimeText}>
+                      {format(task.time, 'HH:mm')}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             ))}
             
@@ -415,6 +531,89 @@ export default function PlannerScreen() {
           </TouchableOpacity>
         </ScrollView>
       )}
+
+      {/* DateTimePicker dla iOS */}
+      {Platform.OS === 'ios' && showDatePicker && (
+        <Modal
+          transparent
+          animationType="slide"
+          visible={showDatePicker}
+          onRequestClose={() => setShowDatePicker(false)}
+        >
+          <View style={styles.pickerModalOverlay}>
+            <View style={styles.pickerModalContent}>
+              <View style={styles.pickerModalHeader}>
+                <TouchableOpacity onPress={() => setShowDatePicker(false)}>
+                  <Text style={styles.pickerCancelText}>Anuluj</Text>
+                </TouchableOpacity>
+                <Text style={styles.pickerTitle}>Wybierz datę</Text>
+                <TouchableOpacity onPress={() => setShowDatePicker(false)}>
+                  <Text style={styles.pickerDoneText}>Gotowe</Text>
+                </TouchableOpacity>
+              </View>
+              <DateTimePicker
+                value={activeTaskIndex !== null ? tasks[activeTaskIndex].date : new Date()}
+                mode="date"
+                display="spinner"
+                onChange={handleDateChange}
+                textColor={theme.text}
+                locale="pl"
+              />
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {Platform.OS === 'ios' && showTimePicker && (
+        <Modal
+          transparent
+          animationType="slide"
+          visible={showTimePicker}
+          onRequestClose={() => setShowTimePicker(false)}
+        >
+          <View style={styles.pickerModalOverlay}>
+            <View style={styles.pickerModalContent}>
+              <View style={styles.pickerModalHeader}>
+                <TouchableOpacity onPress={() => setShowTimePicker(false)}>
+                  <Text style={styles.pickerCancelText}>Anuluj</Text>
+                </TouchableOpacity>
+                <Text style={styles.pickerTitle}>Wybierz godzinę</Text>
+                <TouchableOpacity onPress={() => setShowTimePicker(false)}>
+                  <Text style={styles.pickerDoneText}>Gotowe</Text>
+                </TouchableOpacity>
+              </View>
+              <DateTimePicker
+                value={activeTaskIndex !== null ? tasks[activeTaskIndex].time : new Date()}
+                mode="time"
+                display="spinner"
+                onChange={handleTimeChange}
+                textColor={theme.text}
+                is24Hour={true}
+              />
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* DateTimePicker dla Android */}
+      {Platform.OS === 'android' && showDatePicker && activeTaskIndex !== null && (
+        <DateTimePicker
+          value={tasks[activeTaskIndex].date}
+          mode="date"
+          display="default"
+          onChange={handleDateChange}
+        />
+      )}
+
+      {Platform.OS === 'android' && showTimePicker && activeTaskIndex !== null && (
+        <DateTimePicker
+          value={tasks[activeTaskIndex].time}
+          mode="time"
+          display="default"
+          onChange={handleTimeChange}
+          is24Hour={true}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -464,6 +663,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: theme.primary,
   },
+  taskCard: {
+    backgroundColor: theme.card,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+  },
+  taskCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  taskNumber: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: theme.textSecondary,
+  },
   taskRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -471,12 +687,30 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   taskInput: {
-    flex: 1,
-    backgroundColor: theme.card,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     borderRadius: 12,
-    padding: 16,
+    padding: 14,
     color: theme.text,
     fontSize: 16,
+    marginBottom: 12,
+  },
+  dateTimeRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  dateTimeButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(34, 211, 238, 0.1)',
+    borderRadius: 10,
+    padding: 12,
+    gap: 8,
+  },
+  dateTimeText: {
+    color: theme.text,
+    fontSize: 14,
+    fontWeight: '500',
   },
   removeButton: {
     padding: 4,
@@ -730,5 +964,39 @@ const styles = StyleSheet.create({
     color: theme.text,
     fontSize: 18,
     fontWeight: '600',
+  },
+  // Picker Modal styles
+  pickerModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  pickerModalContent: {
+    backgroundColor: theme.card,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 30,
+  },
+  pickerModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  pickerTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: theme.text,
+  },
+  pickerCancelText: {
+    fontSize: 16,
+    color: theme.textSecondary,
+  },
+  pickerDoneText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: theme.primary,
   },
 });
