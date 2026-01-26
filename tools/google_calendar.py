@@ -183,26 +183,23 @@ def create_calendar_event(
     try:
         service = _get_calendar_service()
         
-        # Upewnij się, że czas ma strefę czasową (Warszawa)
-        # Polska używa CET (+01:00) zimą i CEST (+02:00) latem
-        import pytz
-        warsaw_tz = pytz.timezone('Europe/Warsaw')
+        # Upewnij się, że czas jest w formacie ISO BEZ strefy czasowej
+        # Google Calendar użyje timeZone z body do interpretacji
         
-        def add_warsaw_timezone(time_str: str) -> str:
-            if time_str.endswith('Z') or '+' in time_str or '-' in time_str[-6:]:
-                return time_str
-            # Parsuj i dodaj strefę czasową Warszawy
-            try:
-                from datetime import datetime as dt
-                naive_dt = dt.fromisoformat(time_str)
-                localized_dt = warsaw_tz.localize(naive_dt)
-                return localized_dt.isoformat()
-            except:
-                # Fallback - użyj +01:00 (CET)
-                return time_str + '+01:00'
+        def normalize_time(time_str: str) -> str:
+            """Usuwa strefę czasową z czasu - Google Calendar sam użyje Europe/Warsaw"""
+            import re
+            # Usuń 'Z' na końcu
+            if time_str.endswith('Z'):
+                time_str = time_str[:-1]
+            # Usuń offset (+01:00, -05:00 itp.)
+            time_str = re.sub(r'[+-]\d{2}:\d{2}$', '', time_str)
+            return time_str
         
-        start_time = add_warsaw_timezone(start_time)
-        end_time = add_warsaw_timezone(end_time)
+        print(f"🕐 Otrzymano czasy: start={start_time}, end={end_time}")
+        start_time = normalize_time(start_time)
+        end_time = normalize_time(end_time)
+        print(f"🕐 Po normalizacji (bez TZ): start={start_time}, end={end_time}")
         
         event = {
             'summary': summary,
@@ -210,7 +207,7 @@ def create_calendar_event(
             'description': description,
             'start': {
                 'dateTime': start_time,
-                'timeZone': 'Europe/Warsaw',
+                'timeZone': 'Europe/Warsaw',  # Google Calendar użyje tej strefy
             },
             'end': {
                 'dateTime': end_time,
@@ -227,20 +224,28 @@ def create_calendar_event(
         start_dt = created_event['start'].get('dateTime', created_event['start'].get('date'))
         end_dt = created_event['end'].get('dateTime', created_event['end'].get('date'))
         
-        # Parsuj i formatuj ładnie
+        # Parsuj i formatuj ładnie (konwertuj na czas warszawski)
         try:
             from datetime import datetime as dt
+            import pytz
+            
+            # Parsuj czas (może być w UTC z 'Z' lub z offsetem)
             start_parsed = dt.fromisoformat(start_dt.replace('Z', '+00:00'))
             end_parsed = dt.fromisoformat(end_dt.replace('Z', '+00:00'))
+            
+            # Konwertuj do strefy warszawskiej
+            warsaw_tz = pytz.timezone('Europe/Warsaw')
+            start_warsaw = start_parsed.astimezone(warsaw_tz)
+            end_warsaw = end_parsed.astimezone(warsaw_tz)
             
             # Polski format daty
             days_pl = ['poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota', 'niedziela']
             months_pl = ['stycznia', 'lutego', 'marca', 'kwietnia', 'maja', 'czerwca', 
                         'lipca', 'sierpnia', 'września', 'października', 'listopada', 'grudnia']
             
-            day_name = days_pl[start_parsed.weekday()]
-            date_str = f"{start_parsed.day} {months_pl[start_parsed.month - 1]} {start_parsed.year}"
-            time_str = f"{start_parsed.strftime('%H:%M')} - {end_parsed.strftime('%H:%M')}"
+            day_name = days_pl[start_warsaw.weekday()]
+            date_str = f"{start_warsaw.day} {months_pl[start_warsaw.month - 1]} {start_warsaw.year}"
+            time_str = f"{start_warsaw.strftime('%H:%M')} - {end_warsaw.strftime('%H:%M')}"
             
             return f"""✅ Wydarzenie dodane do kalendarza!
 
